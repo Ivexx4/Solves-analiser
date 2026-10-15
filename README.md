@@ -35,9 +35,9 @@ O Streamlit apresenta no terminal o endereço local do dashboard, normalmente
 
 O dashboard inicia vazio e apresenta um ecrã de importação. Use o seletor
 **Idioma / Language** para alternar entre português e inglês. A documentação em
-inglês está em [README.en.md](README.en.md). Pode escolher os
-JSON de singles/averages do Cubolandia Timer, uma exportação `.txt` ou `.json`
-do CS Timer, ou importar dados dos dois temporizadores na mesma operação.
+inglês está em [README.en.md](README.en.md). Use o importador único para
+selecionar vários ficheiros `.json` ou `.txt`, incluindo ficheiros de ambos os
+temporizadores.
 Clique em **Importar solves** para acrescentar as solves ao histórico que já
 está na sessão atual do Streamlit. A deduplicação compara scramble, tempo
 arredondado a centésimos e penalização; não usa data/hora, que pode ser igual
@@ -47,7 +47,13 @@ desta alteração, limpa-os e importa os ficheiros novamente para incluir os
 scrambles.
 Duplicados removidos são indicados após a importação. Pode importar novamente
 um ficheiro sem repetir solves; use **Limpar dados importados** para começar um
-histórico novo.
+histórico novo. Antes de importar, a tabela de pré-visualização indica o tipo
+detetado (Cubolandia singles, Cubolandia averages ou CS Timer), a quantidade de
+solves e se o ficheiro está pronto. Se algum ficheiro não for reconhecido, a
+importação é bloqueada para evitar ignorar dados inadvertidamente.
+O tipo é identificado pela estrutura do JSON: lista de registos Cubolandia
+com `c` vazio/`Avg:` para singles, cinco tempos em `c` para averages, ou objeto
+com sessões `sessionN` para CS Timer.
 Não são carregados ficheiros locais automaticamente. O resultado da leitura é
 guardado em cache pelo Streamlit com base no conteúdo dos ficheiros (até 10
 combinações diferentes por processo), evitando voltar a analisar os mesmos

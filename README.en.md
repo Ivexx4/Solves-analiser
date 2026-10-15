@@ -33,14 +33,16 @@ Open the local URL printed by Streamlit, usually `http://localhost:8501`.
 
 ## Import data
 
-The dashboard starts empty and provides an import screen. Use the **Language /
-Idioma** selector to switch between Portuguese and English. Upload one or more
-of these Cubolandia Timer or CS Timer exports, then click **Import solves**:
-
-- Cubolandia Timer singles JSON.
-- Cubolandia Timer averages JSON. The five component solves are extracted from
-  each Ao5 record.
-- CS Timer `.txt` or `.json` export.
+The dashboard starts empty and provides a single importer. Use the **Language /
+Idioma** selector to switch between Portuguese and English. Select one or more
+`.json` or `.txt` exports from Cubolandia Timer and/or CS Timer. Before import,
+the preview identifies each file as Cubolandia singles, Cubolandia averages, or
+CS Timer, and shows the number of parsed solves and whether it is ready.
+Unrecognized files block the import so data is not silently skipped.
+Click **Import solves** to append all recognized files to the current session.
+Detection uses the JSON structure: Cubolandia records with empty/`Avg:` `c`
+values are singles, records with five times in `c` are averages, and objects
+with `sessionN` arrays are CS Timer exports.
 
 Each import appends solves to the current Streamlit session. Duplicate detection compares scramble, time rounded to hundredths, and penalty
 rather than date/time, which can be shared by different solves. Solves without

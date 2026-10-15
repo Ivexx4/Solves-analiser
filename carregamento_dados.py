@@ -26,20 +26,61 @@ def parse_time(value: str) -> float:
     return float(value)
 
 
-def _read_export(source: str | Path | BinaryIO) -> list[dict]:
+def _read_json(source: str | Path | BinaryIO):
     if isinstance(source, (str, Path)):
         with Path(source).open("r", encoding="utf-8") as export_file:
-            data = json.load(export_file)
+            return json.load(export_file)
     elif isinstance(source, IOBase) or (
         hasattr(source, "read") and hasattr(source, "seek")
     ):
         source.seek(0)
-        data = json.load(source)
+        return json.load(source)
     else:
         raise TypeError("A origem deve ser um caminho ou um ficheiro JSON aberto.")
+
+
+def _read_export(source: str | Path | BinaryIO) -> list[dict]:
+    data = _read_json(source)
     if not isinstance(data, list):
         raise ValueError("O ficheiro de exportação deve conter uma lista JSON.")
     return data
+
+
+def detect_export_format(source: str | Path | BinaryIO) -> str:
+    """Identify a supported timer export from its JSON structure and content."""
+    data = _read_json(source)
+    if isinstance(data, dict):
+        if any(
+            re.fullmatch(r"session\d+", key)
+            and isinstance(solves, list)
+            for key, solves in data.items()
+        ):
+            return "cstimer"
+        raise ValueError("Objeto JSON não reconhecido como exportação do CS Timer.")
+
+    if not isinstance(data, list) or not data:
+        raise ValueError("A exportação JSON deve conter registos numa lista.")
+    if not all(
+        isinstance(record, dict)
+        and {"i", "n", "s", "t", "c"}.issubset(record)
+        for record in data
+    ):
+        raise ValueError("Formato JSON não reconhecido como exportação Cubolandia ou CS Timer.")
+
+    average_records = [
+        record for record in data
+        if isinstance(record.get("c"), str) and record["c"].strip()
+    ]
+    if not average_records:
+        return "singles"
+    if all(len(TIME_PATTERN.findall(record["c"])) == 5 for record in average_records):
+        return "averages"
+    if all(record["c"].strip().startswith("Avg:") for record in average_records):
+        return "singles"
+    raise ValueError(
+        "O ficheiro tem estrutura Cubolandia, mas não foi possível confirmar "
+        "se contém singles ou averages."
+    )
 
 
 def load_singles(path: str | Path | BinaryIO = SINGLES_FILE) -> pd.DataFrame:

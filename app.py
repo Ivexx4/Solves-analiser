@@ -7,11 +7,14 @@ import plotly.express as px
 import plotly.graph_objects as go
 from carregamento_dados import (
     combine_solves,
+    detect_export_format,
     deduplicate_solves,
     load_averages,
     load_cstimer,
     load_singles,
 )
+
+LARGE_TRACE_THRESHOLD = 3000
 
 # Configuração da página do Streamlit
 st.set_page_config(
@@ -29,6 +32,8 @@ TRANSLATIONS = {
     "Importar solves do Cubolandia Timer": "Import solves",
     "Carregue ficheiros do Cubolandia Timer (singles/averages) e/ou uma exportação do CS Timer. Cada importação acrescenta solves ao histórico atual; use o botão de limpar para começar de novo.":
         "Upload Cubolandia Timer singles/averages files and/or a CS Timer export. Each import appends solves to the current history; use the clear button to start over.",
+    "Carregue ficheiros de solves. O dashboard identifica automaticamente se cada ficheiro é Cubolandia singles, Cubolandia averages ou CS Timer. Cada importação acrescenta solves ao histórico atual; use o botão de limpar para começar de novo. Os scrambles são usados para identificar a mesma solve entre ficheiros; solves sem scramble são mantidas para evitar falsos duplicados.":
+        "Upload solve files. The dashboard automatically identifies each file as Cubolandia singles, Cubolandia averages, or CS Timer. Each import appends solves to the current history; use the clear button to start over. Scrambles identify matching solves across files; solves without a scramble are kept to avoid false duplicates.",
     "Os scrambles são usados para identificar a mesma solve entre ficheiros; solves sem scramble são mantidas para evitar falsos duplicados.":
         "Scrambles identify the same solve across files; solves without a scramble are kept to avoid false duplicates.",
     "Os dados já carregados não incluem scrambles. Limpa os dados e importa os ficheiros novamente para usar a nova deteção de duplicados.":
@@ -36,6 +41,19 @@ TRANSLATIONS = {
     "Ficheiro de singles (.json)": "Singles file (.json)",
     "Ficheiro de averages (.json)": "Averages file (.json)",
     "Exportação CS Timer (.txt ou .json)": "CS Timer export (.txt or .json)",
+    "Seleciona um ou mais ficheiros de solves": "Select one or more solve files",
+    "Ficheiro": "File",
+    "Formato detetado": "Detected format",
+    "Solves": "Solves",
+    "Estado": "Status",
+    "Pronto a importar": "Ready to import",
+    "Formato não reconhecido": "Unrecognized format",
+    "Importação bloqueada: corrige ou remove os ficheiros não reconhecidos.":
+        "Import blocked: fix or remove the unrecognized files.",
+    "Nenhum ficheiro selecionado.": "No files selected.",
+    "Cubolandia Timer — singles": "Cubolandia Timer — singles",
+    "Cubolandia Timer — averages": "Cubolandia Timer — averages",
+    "CS Timer": "CS Timer",
     "Importar solves": "Import solves",
     "Limpar dados importados": "Clear imported data",
     "Seleciona pelo menos um ficheiro antes de importar.":
@@ -391,19 +409,64 @@ def t(text: str) -> str:
 
 
 def show_chart(figure, **kwargs):
-    """Translate chart text while preserving all chart data and styling."""
-    if st.session_state.get("language", "Português") == "English":
-        def translate(value):
-            if isinstance(value, str):
-                return TRANSLATIONS.get(value, value)
-            if isinstance(value, list):
-                return [translate(item) for item in value]
-            if isinstance(value, dict):
-                return {key: translate(item) for key, item in value.items()}
-            return value
+    """Use WebGL for large traces and translate text without changing chart data."""
+    is_english = st.session_state.get("language", "Português") == "English"
+    has_large_trace = any(
+        trace.type == "scatter"
+        and max(len(trace.x) if trace.x is not None else 0,
+                len(trace.y) if trace.y is not None else 0) >= LARGE_TRACE_THRESHOLD
+        for trace in figure.data
+    )
 
-        figure = go.Figure(translate(figure.to_dict()))
+    if is_english or has_large_trace:
+        figure_data = figure.to_dict()
+
+        if has_large_trace:
+            for trace in figure_data["data"]:
+                if trace.get("type") != "scatter":
+                    continue
+                point_count = max(
+                    len(trace.get("x", [])),
+                    len(trace.get("y", [])),
+                )
+                if point_count >= LARGE_TRACE_THRESHOLD:
+                    trace["type"] = "scattergl"
+
+        if is_english:
+            def translate(value):
+                if isinstance(value, str):
+                    return TRANSLATIONS.get(value, value)
+                if isinstance(value, list):
+                    return [translate(item) for item in value]
+                if isinstance(value, dict):
+                    return {key: translate(item) for key, item in value.items()}
+                return value
+
+            figure_data = translate(figure_data)
+
+        figure = go.Figure(figure_data)
+
+    if kwargs.pop("use_container_width", False):
+        kwargs["width"] = "stretch"
     st.plotly_chart(figure, **kwargs)
+
+
+@st.cache_data(max_entries=8, show_spinner=False)
+def prepare_valid_solves(solve_data: pd.DataFrame) -> pd.DataFrame:
+    """Cache finite solve times and their WCA rolling averages."""
+    valid_data = solve_data.loc[
+        np.isfinite(solve_data["time"]),
+        ["date", "time", "penalty"],
+    ].copy()
+    valid_data["rolling_avg_5"] = valid_data["time"].rolling(5).apply(
+        wca_average,
+        raw=True,
+    )
+    valid_data["rolling_avg_12"] = valid_data["time"].rolling(12).apply(
+        wca_average,
+        raw=True,
+    )
+    return valid_data
 
 
 def wca_average(times):
@@ -423,34 +486,18 @@ def wca_average(times):
     return np.mean(trimmed)
 
 
-@st.cache_data(max_entries=10)
-def parse_uploaded_solves(
-    singles_content: bytes | None,
-    averages_content: bytes | None,
-    cstimer_content: bytes | None,
-) -> tuple[pd.DataFrame, int, int, int]:
-    """Parse uploaded timer exports once per distinct file-content combination."""
-    singles_data = (
-        load_singles(BytesIO(singles_content))
-        if singles_content is not None
-        else pd.DataFrame(columns=["date", "time", "penalty"])
-    )
-    averages_data = (
-        load_averages(BytesIO(averages_content))
-        if averages_content is not None
-        else pd.DataFrame(columns=["date", "time", "penalty"])
-    )
-    cstimer_data = (
-        load_cstimer(BytesIO(cstimer_content))
-        if cstimer_content is not None
-        else pd.DataFrame(columns=["date", "time", "penalty"])
-    )
-    return (
-        combine_solves(combine_solves(singles_data, averages_data), cstimer_data),
-        len(singles_data),
-        len(averages_data),
-        len(cstimer_data),
-    )
+@st.cache_data(max_entries=20, show_spinner=False)
+def parse_uploaded_file(content: bytes) -> tuple[pd.DataFrame, str]:
+    """Detect and parse a supported timer export once per uploaded file."""
+    file_format = detect_export_format(BytesIO(content))
+    source = BytesIO(content)
+    if file_format == "singles":
+        data = load_singles(source)
+    elif file_format == "averages":
+        data = load_averages(source)
+    else:
+        data = load_cstimer(source)
+    return data, file_format
 
 
 st.sidebar.selectbox(
@@ -469,31 +516,55 @@ with st.container(border=True):
     st.subheader(t("Importar solves"))
     st.markdown(
         t(
-            "Carregue ficheiros do Cubolandia Timer (singles/averages) e/ou uma exportação do CS Timer. "
+            "Carregue ficheiros de solves. O dashboard identifica automaticamente "
+            "se cada ficheiro é Cubolandia singles, Cubolandia averages ou CS Timer. "
             "Cada importação acrescenta solves ao histórico atual; use o botão de limpar para começar de novo. "
             "Os scrambles são usados para identificar a mesma solve entre ficheiros; "
             "solves sem scramble são mantidas para evitar falsos duplicados."
         )
     )
-    upload_cols = st.columns(3)
-    with upload_cols[0]:
-        uploaded_singles = st.file_uploader(
-            t("Ficheiro de singles (.json)"),
-            type=["json"],
-            key=f"singles_upload_{widget_version}"
+    uploaded_files = st.file_uploader(
+        t("Seleciona um ou mais ficheiros de solves"),
+        type=["json", "txt"],
+        accept_multiple_files=True,
+        key=f"solve_uploads_{widget_version}",
+    )
+
+    file_results = []
+    parsed_files = []
+    for uploaded_file in uploaded_files:
+        try:
+            parsed_data, detected_format = parse_uploaded_file(
+                uploaded_file.getvalue(),
+            )
+            format_label = {
+                "singles": "Cubolandia Timer — singles",
+                "averages": "Cubolandia Timer — averages",
+                "cstimer": "CS Timer",
+            }[detected_format]
+            parsed_files.append((parsed_data, detected_format))
+            file_results.append({
+                t("Ficheiro"): uploaded_file.name,
+                t("Formato detetado"): t(format_label),
+                t("Solves"): len(parsed_data),
+                t("Estado"): t("Pronto a importar"),
+            })
+        except (ValueError, KeyError, TypeError, OSError) as error:
+            file_results.append({
+                t("Ficheiro"): uploaded_file.name,
+                t("Formato detetado"): t("Formato não reconhecido"),
+                t("Solves"): 0,
+                t("Estado"): str(error),
+            })
+
+    if file_results:
+        st.dataframe(
+            pd.DataFrame(file_results),
+            hide_index=True,
+            width="stretch",
         )
-    with upload_cols[1]:
-        uploaded_averages = st.file_uploader(
-            t("Ficheiro de averages (.json)"),
-            type=["json"],
-            key=f"averages_upload_{widget_version}"
-        )
-    with upload_cols[2]:
-        uploaded_cstimer = st.file_uploader(
-            t("Exportação CS Timer (.txt ou .json)"),
-            type=["txt", "json"],
-            key=f"cstimer_upload_{widget_version}"
-        )
+    else:
+        st.caption(t("Nenhum ficheiro selecionado."))
 
     action_cols = st.columns(2)
     import_clicked = action_cols[0].button(
@@ -515,7 +586,11 @@ if clear_clicked:
     st.rerun()
 
 if import_clicked:
-    if (
+    if not uploaded_files:
+        st.warning(t("Seleciona pelo menos um ficheiro antes de importar."))
+    elif len(parsed_files) != len(uploaded_files):
+        st.error(t("Importação bloqueada: corrige ou remove os ficheiros não reconhecidos."))
+    elif (
         "solves_df" in st.session_state
         and "scramble" not in st.session_state["solves_df"].columns
     ):
@@ -525,18 +600,22 @@ if import_clicked:
                 "importa os ficheiros novamente para usar a nova deteção de duplicados."
             )
         )
-    elif (
-        uploaded_singles is None
-        and uploaded_averages is None
-        and uploaded_cstimer is None
-    ):
-        st.warning(t("Seleciona pelo menos um ficheiro antes de importar."))
     else:
         try:
-            imported_data, singles_count, averages_count, cstimer_count = parse_uploaded_solves(
-                uploaded_singles.getvalue() if uploaded_singles is not None else None,
-                uploaded_averages.getvalue() if uploaded_averages is not None else None,
-                uploaded_cstimer.getvalue() if uploaded_cstimer is not None else None,
+            imported_data = combine_solves(
+                *(data for data, _ in parsed_files)
+            )
+            singles_count = sum(
+                len(data) for data, file_format in parsed_files
+                if file_format == "singles"
+            )
+            averages_count = sum(
+                len(data) for data, file_format in parsed_files
+                if file_format == "averages"
+            )
+            cstimer_count = sum(
+                len(data) for data, file_format in parsed_files
+                if file_format == "cstimer"
             )
             if imported_data.empty:
                 st.error(t("Os ficheiros selecionados não contêm solves para importar."))
@@ -591,17 +670,7 @@ st.caption(
     f"{len(df):,}{t(' solves no total).')}"
 )
 
-valid_df = df[np.isfinite(df["time"])].copy()
-valid_df['rolling_avg_5'] = (
-    valid_df['time']
-    .rolling(5)
-    .apply(wca_average, raw=True)
-)
-valid_df['rolling_avg_12'] = (
-    valid_df['time']
-    .rolling(12)
-    .apply(wca_average, raw=True)
-)
+valid_df = prepare_valid_solves(df[["date", "time", "penalty"]])
 
 st.markdown(t("Passe o rato sobre os gráficos para ver detalhes, utilize os comandos de zoom e explore o seu histórico de resoluções."))
 
@@ -619,9 +688,13 @@ date_range = st.sidebar.date_input(
 
 if len(date_range) == 2:
     start_date, end_date = date_range
-    mask = (df['date'].dt.date >= start_date) & (df['date'].dt.date <= end_date)
+    start_datetime = pd.Timestamp(start_date)
+    end_datetime = pd.Timestamp(end_date) + pd.Timedelta(days=1)
+    mask = df["date"].ge(start_datetime) & df["date"].lt(end_datetime)
     df_filtered = df.loc[mask]
-    valid_filtered = valid_df.loc[(valid_df['date'].dt.date >= start_date) & (valid_df['date'].dt.date <= end_date)]
+    valid_filtered = valid_df.loc[
+        valid_df["date"].ge(start_datetime) & valid_df["date"].lt(end_datetime)
+    ]
 else:
     df_filtered = df
     valid_filtered = valid_df
