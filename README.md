@@ -41,7 +41,7 @@ O Streamlit apresenta no terminal o endereço local do dashboard, normalmente
 O dashboard inicia vazio e apresenta um ecrã de importação. Use o seletor
 **Idioma / Language** para alternar entre português e inglês. A documentação em
 inglês está em [README.en.md](README.en.md). Use o importador único para
-selecionar vários ficheiros `.json` ou `.txt`, incluindo ficheiros de ambos os
+selecionar vários ficheiros `.json`, `.txt` ou `.csv`, incluindo ficheiros de ambos os
 temporizadores.
 Clique em **Importar solves** para acrescentar as solves ao histórico que já
 está na sessão atual do Streamlit. A deduplicação compara scramble, tempo
@@ -58,7 +58,8 @@ solves e se o ficheiro está pronto. Se algum ficheiro não for reconhecido, a
 importação é bloqueada para evitar ignorar dados inadvertidamente.
 O tipo é identificado pela estrutura do JSON: lista de registos Cubolandia
 com `c` vazio/`Avg:` para singles, cinco tempos em `c` para averages, ou objeto
-com sessões `sessionN` para CS Timer.
+com sessões `sessionN` para CS Timer. Também são aceites CSVs do CS Timer com
+as colunas `Time`, `Scramble` e `Date` (separadas por ponto e vírgula ou vírgula).
 Não são carregados ficheiros locais automaticamente. O resultado da leitura é
 guardado em cache pelo Streamlit com base no conteúdo dos ficheiros (até 10
 combinações diferentes por processo), evitando voltar a analisar os mesmos
@@ -72,6 +73,8 @@ Os formatos suportados são:
 - Exportação CS Timer em `.txt` ou `.json` — ficheiro JSON com sessões `sessionN`;
   os tempos em milissegundos são convertidos para segundos, com suporte para
   penalização +2 e DNF.
+- Exportação CS Timer `.csv` com `Time`, `Scramble` e `Date`; tempos com `+`
+  são importados com penalização +2, e `DNF` é preservado como DNF.
 
 O módulo `carregamento_dados.py` disponibiliza `load_singles()`,
 `load_averages()`, `load_cstimer()` e `combine_solves()` para que cada etapa

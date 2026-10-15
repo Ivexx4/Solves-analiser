@@ -11,6 +11,7 @@ from carregamento_dados import (
     deduplicate_solves,
     load_averages,
     load_cstimer,
+    load_cstimer_csv,
     load_singles,
 )
 
@@ -34,6 +35,8 @@ TRANSLATIONS = {
         "Upload Cubolandia Timer singles/averages files and/or a CS Timer export. Each import appends solves to the current history; use the clear button to start over.",
     "Carregue ficheiros de solves. O dashboard identifica automaticamente se cada ficheiro é Cubolandia singles, Cubolandia averages ou CS Timer. Cada importação acrescenta solves ao histórico atual; use o botão de limpar para começar de novo. Os scrambles são usados para identificar a mesma solve entre ficheiros; solves sem scramble são mantidas para evitar falsos duplicados.":
         "Upload solve files. The dashboard automatically identifies each file as Cubolandia singles, Cubolandia averages, or CS Timer. Each import appends solves to the current history; use the clear button to start over. Scrambles identify matching solves across files; solves without a scramble are kept to avoid false duplicates.",
+    "Carregue ficheiros de solves. O dashboard identifica automaticamente se cada ficheiro é Cubolandia singles, Cubolandia averages, CS Timer JSON/TXT ou CS Timer CSV. Cada importação acrescenta solves ao histórico atual; use o botão de limpar para começar de novo. Os scrambles são usados para identificar a mesma solve entre ficheiros; solves sem scramble são mantidas para evitar falsos duplicados.":
+        "Upload solve files. The dashboard automatically identifies each file as Cubolandia singles, Cubolandia averages, CS Timer JSON/TXT, or CS Timer CSV. Each import appends solves to the current history; use the clear button to start over. Scrambles identify matching solves across files; solves without a scramble are kept to avoid false duplicates.",
     "Os scrambles são usados para identificar a mesma solve entre ficheiros; solves sem scramble são mantidas para evitar falsos duplicados.":
         "Scrambles identify the same solve across files; solves without a scramble are kept to avoid false duplicates.",
     "Os dados já carregados não incluem scrambles. Limpa os dados e importa os ficheiros novamente para usar a nova deteção de duplicados.":
@@ -54,6 +57,7 @@ TRANSLATIONS = {
     "Cubolandia Timer — singles": "Cubolandia Timer — singles",
     "Cubolandia Timer — averages": "Cubolandia Timer — averages",
     "CS Timer": "CS Timer",
+    "CS Timer — CSV": "CS Timer — CSV",
     "Importar solves": "Import solves",
     "Limpar dados importados": "Clear imported data",
     "Seleciona pelo menos um ficheiro antes de importar.":
@@ -495,6 +499,8 @@ def parse_uploaded_file(content: bytes) -> tuple[pd.DataFrame, str]:
         data = load_singles(source)
     elif file_format == "averages":
         data = load_averages(source)
+    elif file_format == "cstimer_csv":
+        data = load_cstimer_csv(source)
     else:
         data = load_cstimer(source)
     return data, file_format
@@ -517,7 +523,8 @@ with st.container(border=True):
     st.markdown(
         t(
             "Carregue ficheiros de solves. O dashboard identifica automaticamente "
-            "se cada ficheiro é Cubolandia singles, Cubolandia averages ou CS Timer. "
+            "se cada ficheiro é Cubolandia singles, Cubolandia averages, CS Timer JSON/TXT "
+            "ou CS Timer CSV. "
             "Cada importação acrescenta solves ao histórico atual; use o botão de limpar para começar de novo. "
             "Os scrambles são usados para identificar a mesma solve entre ficheiros; "
             "solves sem scramble são mantidas para evitar falsos duplicados."
@@ -525,7 +532,7 @@ with st.container(border=True):
     )
     uploaded_files = st.file_uploader(
         t("Seleciona um ou mais ficheiros de solves"),
-        type=["json", "txt"],
+        type=["json", "txt", "csv"],
         accept_multiple_files=True,
         key=f"solve_uploads_{widget_version}",
     )
@@ -541,6 +548,7 @@ with st.container(border=True):
                 "singles": "Cubolandia Timer — singles",
                 "averages": "Cubolandia Timer — averages",
                 "cstimer": "CS Timer",
+                "cstimer_csv": "CS Timer — CSV",
             }[detected_format]
             parsed_files.append((parsed_data, detected_format))
             file_results.append({
@@ -615,7 +623,7 @@ if import_clicked:
             )
             cstimer_count = sum(
                 len(data) for data, file_format in parsed_files
-                if file_format == "cstimer"
+                if file_format in {"cstimer", "cstimer_csv"}
             )
             if imported_data.empty:
                 st.error(t("Os ficheiros selecionados não contêm solves para importar."))
@@ -647,8 +655,7 @@ if import_clicked:
                 }
                 st.session_state["last_import_notice"] = (
                     f"{t('Importação concluída: ')}{len(combined_data) - previous_solve_count:,}"
-                    f"{t(' solves novas; ')}{duplicates_removed:,}"
-                    f"{t(' duplicados removidos (CS Timer: ')}{cstimer_count:,})."
+                    f"{t(' solves novas; ')}"
                 )
                 st.session_state["upload_widget_version"] += 1
                 st.rerun()

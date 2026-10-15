@@ -2,7 +2,7 @@
 
 import json
 import re
-from io import IOBase
+from io import BytesIO, IOBase
 from pathlib import Path
 from typing import BinaryIO
 
@@ -39,6 +39,20 @@ def _read_json(source: str | Path | BinaryIO):
         raise TypeError("A origem deve ser um caminho ou um ficheiro JSON aberto.")
 
 
+def _read_bytes(source: str | Path | BinaryIO) -> bytes:
+    if isinstance(source, (str, Path)):
+        return Path(source).read_bytes()
+    if isinstance(source, IOBase) or (
+        hasattr(source, "read") and hasattr(source, "seek")
+    ):
+        source.seek(0)
+        content = source.read()
+        if isinstance(content, str):
+            return content.encode("utf-8")
+        return content
+    raise TypeError("A origem deve ser um caminho ou um ficheiro aberto.")
+
+
 def _read_export(source: str | Path | BinaryIO) -> list[dict]:
     data = _read_json(source)
     if not isinstance(data, list):
@@ -47,8 +61,21 @@ def _read_export(source: str | Path | BinaryIO) -> list[dict]:
 
 
 def detect_export_format(source: str | Path | BinaryIO) -> str:
-    """Identify a supported timer export from its JSON structure and content."""
-    data = _read_json(source)
+    """Identify a supported timer export from its content."""
+    content = _read_bytes(source)
+    text = content.decode("utf-8-sig")
+    first_character = text.lstrip()[:1]
+    if first_character not in ("{", "["):
+        try:
+            columns = pd.read_csv(BytesIO(content), sep=None, engine="python", nrows=0).columns
+        except (pd.errors.ParserError, UnicodeDecodeError, ValueError) as error:
+            raise ValueError("O ficheiro não é um CSV válido.") from error
+        normalized_columns = {str(column).strip().casefold() for column in columns}
+        if {"time", "scramble", "date"}.issubset(normalized_columns):
+            return "cstimer_csv"
+        raise ValueError("Formato CSV não reconhecido como exportação CS Timer.")
+
+    data = json.loads(text)
     if isinstance(data, dict):
         if any(
             re.fullmatch(r"session\d+", key)
@@ -81,6 +108,62 @@ def detect_export_format(source: str | Path | BinaryIO) -> str:
         "O ficheiro tem estrutura Cubolandia, mas não foi possível confirmar "
         "se contém singles ou averages."
     )
+
+
+def load_cstimer_csv(source: str | Path | BinaryIO) -> pd.DataFrame:
+    """Load CS Timer CSV exports with time, scramble, and date columns."""
+    content = _read_bytes(source)
+    try:
+        data = pd.read_csv(BytesIO(content), sep=None, engine="python")
+    except (pd.errors.ParserError, UnicodeDecodeError, ValueError) as error:
+        raise ValueError("Não foi possível ler o CSV do CS Timer.") from error
+
+    column_lookup = {
+        str(column).strip().casefold(): column
+        for column in data.columns
+    }
+    required_columns = {"time", "scramble", "date"}
+    if not required_columns.issubset(column_lookup):
+        raise ValueError(
+            "O CSV do CS Timer deve conter as colunas Time, Scramble e Date."
+        )
+
+    solves = []
+    for row_number, row in data.iterrows():
+        raw_time = str(row[column_lookup["time"]]).strip()
+        if not raw_time or raw_time.casefold() in {"nan", "none"}:
+            raise ValueError(f"Tempo em falta na linha {row_number + 2} do CSV.")
+        if raw_time.upper().startswith("DNF"):
+            time, penalty = np.inf, 2
+        else:
+            penalty = int(raw_time.endswith("+"))
+            normalized_time = raw_time[:-1].strip() if penalty else raw_time
+            try:
+                time = parse_time(normalized_time)
+            except ValueError as error:
+                raise ValueError(
+                    f"Tempo inválido na linha {row_number + 2} do CSV: {raw_time}"
+                ) from error
+
+        raw_date = row[column_lookup["date"]]
+        date = pd.to_datetime(raw_date, errors="coerce")
+        if pd.isna(date):
+            raise ValueError(
+                f"Data inválida na linha {row_number + 2} do CSV: {raw_date}"
+            )
+
+        raw_scramble = row[column_lookup["scramble"]]
+        scramble = "" if pd.isna(raw_scramble) else str(raw_scramble)
+        solves.append({
+            "date": date,
+            "time": time,
+            "penalty": penalty,
+            "scramble": scramble,
+        })
+
+    if not solves:
+        raise ValueError("O CSV do CS Timer não contém solves.")
+    return pd.DataFrame(solves, columns=["date", "time", "penalty", "scramble"])
 
 
 def load_singles(path: str | Path | BinaryIO = SINGLES_FILE) -> pd.DataFrame:

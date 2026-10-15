@@ -15,6 +15,7 @@ env/
 # Local data exports and generated files
 combined_solves.csv
 cstimer_*.txt
+cstimer_*.csv
 data_Cubo3x3x3Normal.json
 data_Cubo3x3x3NormalAVG.json
 *.png

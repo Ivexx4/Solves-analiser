@@ -40,14 +40,15 @@ Open the local URL printed by Streamlit, usually `http://localhost:8501`.
 
 The dashboard starts empty and provides a single importer. Use the **Language /
 Idioma** selector to switch between Portuguese and English. Select one or more
-`.json` or `.txt` exports from Cubolandia Timer and/or CS Timer. Before import,
+`.json`, `.txt`, or `.csv` exports from Cubolandia Timer and/or CS Timer. Before import,
 the preview identifies each file as Cubolandia singles, Cubolandia averages, or
 CS Timer, and shows the number of parsed solves and whether it is ready.
 Unrecognized files block the import so data is not silently skipped.
 Click **Import solves** to append all recognized files to the current session.
 Detection uses the JSON structure: Cubolandia records with empty/`Avg:` `c`
 values are singles, records with five times in `c` are averages, and objects
-with `sessionN` arrays are CS Timer exports.
+with `sessionN` arrays are CS Timer exports. CS Timer CSV files are recognized
+by their `Time`, `Scramble`, and `Date` columns (comma- or semicolon-delimited).
 
 Each import appends solves to the current Streamlit session. Duplicate detection compares scramble, time rounded to hundredths, and penalty
 rather than date/time, which can be shared by different solves. Solves without
@@ -72,6 +73,8 @@ are loaded automatically.
 - CS Timer export: JSON object containing `sessionN` arrays. Each solve uses
   the format `[[penalty, time_ms], scramble, comment, timestamp]`. Times are
   converted from milliseconds to seconds; +2 penalties and DNFs are supported.
+- CS Timer CSV export: requires `Time`, `Scramble`, and `Date` columns. A `+`
+  suffix indicates a +2 penalty; `DNF` is preserved as a DNF.
 
 The optional `carregamento_dados.py` module exposes `load_singles()`,
 `load_averages()`, `load_cstimer()`, and `combine_solves()` for independent
