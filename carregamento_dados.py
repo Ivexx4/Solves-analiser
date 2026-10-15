@@ -1,0 +1,178 @@
+"""Load Cubolandia Timer singles and Ao5 exports into the dashboard schema."""
+
+import json
+import re
+from io import IOBase
+from pathlib import Path
+from typing import BinaryIO
+
+import numpy as np
+import pandas as pd
+
+
+PROJECT_DIR = Path(__file__).resolve().parent
+SINGLES_FILE = PROJECT_DIR / "data_Cubo3x3x3Normal.json"
+AVERAGES_FILE = PROJECT_DIR / "data_Cubo3x3x3NormalAVG.json"
+TIME_PATTERN = re.compile(r"\(?(?:DNF|\d+(?::\d+)?\.\d+\+?)\)?")
+AO5_SINGLE_PATTERN = re.compile(r"\([1-5]\)$")
+
+
+def parse_time(value: str) -> float:
+    """Convert a Cubolandia time such as ``1:12.34`` or ``34.56`` to seconds."""
+    if ":" in value:
+        minutes, seconds = value.split(":", maxsplit=1)
+        return int(minutes) * 60 + float(seconds)
+    return float(value)
+
+
+def _read_export(source: str | Path | BinaryIO) -> list[dict]:
+    if isinstance(source, (str, Path)):
+        with Path(source).open("r", encoding="utf-8") as export_file:
+            data = json.load(export_file)
+    elif isinstance(source, IOBase) or (
+        hasattr(source, "read") and hasattr(source, "seek")
+    ):
+        source.seek(0)
+        data = json.load(source)
+    else:
+        raise TypeError("A origem deve ser um caminho ou um ficheiro JSON aberto.")
+    if not isinstance(data, list):
+        raise ValueError("O ficheiro de exportação deve conter uma lista JSON.")
+    return data
+
+
+def load_singles(path: str | Path | BinaryIO = SINGLES_FILE) -> pd.DataFrame:
+    """Load individual solves, excluding component solves already supplied by Ao5."""
+    singles = []
+    for solve in _read_export(path):
+        timestamp = str(solve["i"])
+        if AO5_SINGLE_PATTERN.search(timestamp):
+            continue
+
+        time = float(solve["n"])
+        penalty = int(solve["t"])
+        if time == -1 or penalty == 2:
+            time = np.inf
+            penalty = 2
+
+        singles.append({
+            "date": timestamp,
+            "time": time,
+            "penalty": penalty,
+        })
+    return pd.DataFrame(singles, columns=["date", "time", "penalty"])
+
+
+def load_averages(path: str | Path | BinaryIO = AVERAGES_FILE) -> pd.DataFrame:
+    """Expand each Cubolandia Ao5 export into its five underlying solves."""
+    solves = []
+    for average in _read_export(path):
+        for token in TIME_PATTERN.findall(average["c"]):
+            raw = token.strip("()")
+            if raw == "DNF":
+                time, penalty = np.inf, 2
+            else:
+                penalty = int(raw.endswith("+"))
+                time = parse_time(raw[:-1] if penalty else raw)
+
+            solves.append({
+                "date": average["i"],
+                "time": time,
+                "penalty": penalty,
+            })
+    return pd.DataFrame(solves, columns=["date", "time", "penalty"])
+
+
+def load_cstimer(source: str | Path | BinaryIO) -> pd.DataFrame:
+    """Load solves from a CS Timer JSON export, commonly saved with a .txt suffix."""
+    if isinstance(source, (str, Path)):
+        with Path(source).open("r", encoding="utf-8") as export_file:
+            data = json.load(export_file)
+    elif isinstance(source, IOBase) or (
+        hasattr(source, "read") and hasattr(source, "seek")
+    ):
+        source.seek(0)
+        data = json.load(source)
+    else:
+        raise TypeError("A origem deve ser um caminho ou um ficheiro CS Timer aberto.")
+
+    if not isinstance(data, dict):
+        raise ValueError("A exportação CS Timer deve conter um objeto JSON.")
+
+    solves = []
+    session_pattern = re.compile(r"session\d+")
+    for session_name, session_solves in data.items():
+        if not session_pattern.fullmatch(session_name):
+            continue
+        if not isinstance(session_solves, list):
+            raise ValueError(f"A sessão {session_name} não contém uma lista de solves.")
+
+        for solve in session_solves:
+            if not isinstance(solve, list) or len(solve) < 4:
+                raise ValueError(f"Formato de solve inválido na sessão {session_name}.")
+            result = solve[0]
+            if not isinstance(result, list) or len(result) < 2:
+                raise ValueError(f"Tempo/penalização inválidos na sessão {session_name}.")
+
+            raw_penalty = int(result[0])
+            raw_time = float(result[1])
+            timestamp = float(solve[3])
+
+            if raw_penalty == -1 or raw_time < 0:
+                time, penalty = np.inf, 2
+            else:
+                time = (raw_time + (2000 if raw_penalty == 2000 else 0)) / 1000
+                penalty = 1 if raw_penalty == 2000 else 0
+
+            # CS Timer records Unix timestamps in seconds; keep the same naive datetime schema.
+            date = pd.to_datetime(timestamp, unit="s")
+            solves.append({
+                "date": date,
+                "time": time,
+                "penalty": penalty,
+            })
+
+    if not solves:
+        raise ValueError("A exportação CS Timer não contém solves em sessões.")
+    return pd.DataFrame(solves, columns=["date", "time", "penalty"])
+
+def combine_solves(*dfs: pd.DataFrame) -> pd.DataFrame:
+    """Combine any number of solve DataFrames and normalize them for the dashboard."""
+
+    combined = pd.concat(dfs, ignore_index=True)
+
+    combined["date"] = pd.to_datetime(combined["date"])
+    combined["time"] = pd.to_numeric(combined["time"], errors="raise")
+    combined["penalty"] = pd.to_numeric(combined["penalty"], errors="raise").astype(int)
+
+    dnf_mask = combined["time"].eq(-1) | combined["penalty"].eq(2)
+    combined.loc[dnf_mask, "time"] = np.inf
+    combined.loc[dnf_mask, "penalty"] = 2
+
+    return (
+        combined.sort_values("date", kind="stable")
+        .reset_index(drop=True)
+    )
+
+
+def load_data(
+    singles_path: str | Path | BinaryIO = SINGLES_FILE,
+    averages_path: str | Path | BinaryIO = AVERAGES_FILE,
+) -> pd.DataFrame:
+    """Load and combine the two Cubolandia Timer exports."""
+    singles = load_singles(singles_path)
+    average_solves = load_averages(averages_path)
+    return combine_solves(singles, average_solves)
+
+
+if __name__ == "__main__":
+    singles = load_singles()
+    average_solves = load_averages()
+    cstimer=load_cstimer(PROJECT_DIR / "cstimer_export.txt")
+    combined = combine_solves(singles, average_solves ,cstimer)
+    combined.to_csv(PROJECT_DIR / "combined_solves.csv", index=False)
+
+    print(f"Singles carregados: {len(singles)}")
+    print(f"Solves extraídas dos averages: {len(average_solves)}")
+    print(f"Solves carregados do CS Timer: {len(cstimer)}")
+    print(f"Total exportado: {len(combined)}")
