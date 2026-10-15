@@ -14,6 +14,7 @@ PROJECT_DIR = Path(__file__).resolve().parent
 SINGLES_FILE = PROJECT_DIR / "data_Cubo3x3x3Normal.json"
 AVERAGES_FILE = PROJECT_DIR / "data_Cubo3x3x3NormalAVG.json"
 TIME_PATTERN = re.compile(r"\(?(?:DNF|\d+(?::\d+)?\.\d+\+?)\)?")
+TIME_LINE_PATTERN = re.compile(r"^\(?\s*(?:DNF|\d+(?::\d+)?\.\d+\+?)\s*\)?$")
 AO5_SINGLE_PATTERN = re.compile(r"\([1-5]\)$")
 
 
@@ -59,15 +60,28 @@ def load_singles(path: str | Path | BinaryIO = SINGLES_FILE) -> pd.DataFrame:
             "date": timestamp,
             "time": time,
             "penalty": penalty,
+            "scramble": solve.get("s", ""),
         })
-    return pd.DataFrame(singles, columns=["date", "time", "penalty"])
+    return pd.DataFrame(singles, columns=["date", "time", "penalty", "scramble"])
 
 
 def load_averages(path: str | Path | BinaryIO = AVERAGES_FILE) -> pd.DataFrame:
     """Expand each Cubolandia Ao5 export into its five underlying solves."""
     solves = []
     for average in _read_export(path):
-        for token in TIME_PATTERN.findall(average["c"]):
+        tokens = TIME_PATTERN.findall(average["c"])
+        lines = [line.strip() for line in average.get("s", "").splitlines()]
+        scrambles = []
+        for index, line in enumerate(lines):
+            if not TIME_LINE_PATTERN.fullmatch(line):
+                continue
+            scramble = next(
+                (following for following in lines[index + 1:] if following),
+                "",
+            )
+            scrambles.append(scramble)
+
+        for index, token in enumerate(tokens):
             raw = token.strip("()")
             if raw == "DNF":
                 time, penalty = np.inf, 2
@@ -79,8 +93,9 @@ def load_averages(path: str | Path | BinaryIO = AVERAGES_FILE) -> pd.DataFrame:
                 "date": average["i"],
                 "time": time,
                 "penalty": penalty,
+                "scramble": scrambles[index] if index < len(scrambles) else "",
             })
-    return pd.DataFrame(solves, columns=["date", "time", "penalty"])
+    return pd.DataFrame(solves, columns=["date", "time", "penalty", "scramble"])
 
 
 def load_cstimer(source: str | Path | BinaryIO) -> pd.DataFrame:
@@ -130,16 +145,26 @@ def load_cstimer(source: str | Path | BinaryIO) -> pd.DataFrame:
                 "date": date,
                 "time": time,
                 "penalty": penalty,
+                "scramble": solve[1] if isinstance(solve[1], str) else "",
             })
 
     if not solves:
         raise ValueError("A exportação CS Timer não contém solves em sessões.")
-    return pd.DataFrame(solves, columns=["date", "time", "penalty"])
+    return pd.DataFrame(solves, columns=["date", "time", "penalty", "scramble"])
 
 def combine_solves(*dfs: pd.DataFrame) -> pd.DataFrame:
     """Combine any number of solve DataFrames and normalize them for the dashboard."""
 
     combined = pd.concat(dfs, ignore_index=True)
+    if "scramble" not in combined.columns:
+        combined["scramble"] = ""
+    combined["scramble"] = (
+        combined["scramble"]
+        .fillna("")
+        .astype(str)
+        .str.split()
+        .str.join(" ")
+    )
 
     combined["date"] = pd.to_datetime(combined["date"])
     combined["time"] = pd.to_numeric(combined["time"], errors="raise")
@@ -153,6 +178,25 @@ def combine_solves(*dfs: pd.DataFrame) -> pd.DataFrame:
         combined.sort_values("date", kind="stable")
         .reset_index(drop=True)
     )
+
+
+def deduplicate_solves(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    """Remove matching solve imports without collapsing rows lacking scramble data."""
+    normalized = combine_solves(df)
+    has_scramble = normalized["scramble"].ne("")
+    with_scramble = normalized.loc[has_scramble].copy()
+    with_scramble["_dedup_time"] = with_scramble["time"].round(2)
+    with_scramble = with_scramble.drop_duplicates(
+        subset=["scramble", "_dedup_time", "penalty"],
+        keep="first",
+    ).drop(columns="_dedup_time")
+    without_scramble = normalized.loc[~has_scramble]
+    deduplicated = (
+        pd.concat([with_scramble, without_scramble], ignore_index=True)
+        .sort_values("date", kind="stable")
+        .reset_index(drop=True)
+    )
+    return deduplicated, len(normalized) - len(deduplicated)
 
 
 def load_data(

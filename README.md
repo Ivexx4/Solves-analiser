@@ -14,15 +14,14 @@ filtrados clicando na legenda.
 - Plotly
 - statsmodels (utilizado pela linha de tendência da análise “Velocidade vs Consistência”)
 
-Instale as dependências, se necessário:
+Instale as dependências:
 
 ```powershell
-python -m pip install streamlit pandas numpy plotly statsmodels
+python -m pip install -r requirements.txt
 ```
 
 ## Executar
 
-O ficheiro `combined_solves.csv` deve estar na mesma pasta que `app.py`.
 Na pasta do projeto, execute:
 
 ```powershell
@@ -34,12 +33,18 @@ O Streamlit apresenta no terminal o endereço local do dashboard, normalmente
 
 ## Importar dados
 
-O dashboard inicia vazio e apresenta um ecrã de importação. Pode escolher os
+O dashboard inicia vazio e apresenta um ecrã de importação. Use o seletor
+**Idioma / Language** para alternar entre português e inglês. A documentação em
+inglês está em [README.en.md](README.en.md). Pode escolher os
 JSON de singles/averages do Cubolandia Timer, uma exportação `.txt` ou `.json`
 do CS Timer, ou importar dados dos dois temporizadores na mesma operação.
 Clique em **Importar solves** para acrescentar as solves ao histórico que já
-está na sessão atual do Streamlit. Cada importação remove duplicados com a
-mesma data/hora, tempo e penalização.
+está na sessão atual do Streamlit. A deduplicação compara scramble, tempo
+arredondado a centésimos e penalização; não usa data/hora, que pode ser igual
+para solves diferentes. Solves sem scramble são mantidas, pois não é possível
+confirmar com segurança se são repetidas. Se já tinhas dados carregados antes
+desta alteração, limpa-os e importa os ficheiros novamente para incluir os
+scrambles.
 Duplicados removidos são indicados após a importação. Pode importar novamente
 um ficheiro sem repetir solves; use **Limpar dados importados** para começar um
 histórico novo.
@@ -77,6 +82,7 @@ Os JSON do Cubolandia Timer devem conter uma lista de registos com estas proprie
 | Coluna | Tipo esperado | Descrição |
 |---|---|---|
 | `i` | Data/hora reconhecida por pandas | Data e hora da solve ou sessão |
+| `s` | Texto | Scramble associado à solve (ou lista de scrambles no campo `s` dos averages) |
 | `n` | Número | Tempo do single em segundos; `-1` representa DNF |
 | `t` | Número inteiro | Penalização do single: `0` limpo, `1` +2 segundos, `2` DNF |
 | `c` | Texto (ficheiro AVG) | Lista textual das cinco solves, incluindo `DNF`, `+2` e parênteses de corte |
