@@ -29,6 +29,11 @@ Start the app from the project directory:
 python -m streamlit run app.py
 ```
 
+`app.py` exports the ASGI application and points to the dashboard UI in
+`dashboard.py`. You can also launch it directly with `python app.py`.
+This entry point can be discovered by Python runtimes that look for a top-level
+ASGI variable named `app`.
+
 Open the local URL printed by Streamlit, usually `http://localhost:8501`.
 
 ## Import data

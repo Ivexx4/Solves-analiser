@@ -28,6 +28,11 @@ Na pasta do projeto, execute:
 python -m streamlit run app.py
 ```
 
+O `app.py` exporta a aplicação ASGI e encaminha para a interface definida em
+`dashboard.py`. Também podes iniciar diretamente com `python app.py`.
+Esta separação permite que runtimes Python que procuram uma variável ASGI
+`app` reconheçam o ponto de entrada.
+
 O Streamlit apresenta no terminal o endereço local do dashboard, normalmente
 `http://localhost:8501`.
 
